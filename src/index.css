@@ -1,0 +1,172 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: "Be Vietnam Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-serif: "Newsreader", "Times New Roman", Georgia, serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Tôn trọng prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Định dạng vùng xem trước khổ A4 */
+.a4-preview-sheet {
+  font-family: "Times New Roman", "Newsreader", Georgia, serif;
+  font-size: 13pt;
+  line-height: 1.15;
+  color: #0f172a;
+  background-color: #ffffff;
+}
+
+.a4-preview-sheet h1,
+.a4-preview-sheet h2,
+.a4-preview-sheet h3,
+.a4-preview-sheet p,
+.a4-preview-sheet li {
+  font-family: inherit;
+  font-size: 13pt;
+  line-height: inherit;
+  text-indent: 1.27cm;
+  text-align: justify;
+  margin-top: 6pt;
+  margin-bottom: 0;
+}
+
+.a4-preview-sheet .preview-centered {
+  text-indent: 0;
+  text-align: center;
+}
+
+.a4-preview-sheet table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 6pt;
+  margin-bottom: 0;
+}
+
+.a4-preview-sheet table.preview-header-table {
+  margin-top: 0;
+}
+
+.a4-preview-sheet table.preview-header-table td {
+  border: none;
+  padding: 2px 6px;
+}
+
+.a4-preview-sheet th,
+.a4-preview-sheet td {
+  border: 1px solid #334155;
+  padding: 6px 10px;
+  vertical-align: middle;
+  text-align: center;
+  text-indent: 0;
+  font-size: 13pt;
+  line-height: inherit;
+}
+
+.a4-preview-sheet table p,
+.a4-preview-sheet table li {
+  text-indent: 0;
+  text-align: center;
+  margin-top: 0;
+  margin-bottom: 0;
+  font-size: 13pt;
+  line-height: inherit;
+}
+
+/* Print stylesheet — ẩn điều hướng, giữ nguyên bảng không bị cắt ngang */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 20mm 15mm 20mm 25mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .no-print,
+  aside,
+  header[data-app-topbar="true"],
+  nav[data-mobile-nav="true"],
+  [data-toast-container="true"] {
+    display: none !important;
+  }
+
+  main,
+  .print-container {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  .a4-preview-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    font-family: "Times New Roman", serif !important;
+    font-size: 13pt !important;
+    zoom: 1 !important;
+  }
+
+  .a4-preview-sheet tr,
+  .a4-preview-sheet .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .a4-preview-sheet .print-page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+}
