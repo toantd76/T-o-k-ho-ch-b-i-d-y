@@ -74,7 +74,10 @@ export function TemplatesView({
             >
               <div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {EDUCATION_LEVEL_LABELS[tpl.level]} · {tpl.isBuiltIn ? 'Mẫu tham khảo' : 'Mẫu giáo viên lưu'}
+                  {tpl.structureType === 'thcs_thpt_cv5512' || tpl.structureType === 'thcs_thpt_tien_trinh'
+                    ? 'THCS / THPT'
+                    : EDUCATION_LEVEL_LABELS[tpl.level]}{' '}
+                  · {tpl.isBuiltIn ? 'Mẫu tham khảo' : 'Mẫu giáo viên lưu'}
                 </p>
                 <h3 className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100">
                   {tpl.name}
@@ -134,7 +137,10 @@ export function TemplatesView({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs text-slate-500">
-                  {EDUCATION_LEVEL_LABELS[previewTemplate.level]}
+                  {previewTemplate.structureType === 'thcs_thpt_cv5512' ||
+                  previewTemplate.structureType === 'thcs_thpt_tien_trinh'
+                    ? 'THCS / THPT'
+                    : EDUCATION_LEVEL_LABELS[previewTemplate.level]}
                 </p>
                 <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   {previewTemplate.name}

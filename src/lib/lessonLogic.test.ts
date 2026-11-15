@@ -799,8 +799,84 @@ test('compactFrameworkCitations and normalizePlanCompactCitations shorten CV 345
   assert.ok(!xml.includes('QĐ 2422/QĐ-BGDĐT'));
 });
 
+test('CV 5512 Appendix 4 template exists, drives prompt guidance, and exports official Appendix 4 structure', async () => {
+  const { Packer } = await import('docx');
+  const { inflateRawSync } = await import('node:zlib');
+  const { BUILT_IN_TEMPLATES, createDefaultSettings } = await import('./templatesAndSamples');
+  const { createLessonPlanDocxDocument } = await import('./docxExporter');
+  const { buildGeneratePlanPrompt } = await import('../../server/prompts.ts');
 
+  const cvTpl = BUILT_IN_TEMPLATES.find((t) => t.id === 'tpl-thcs-thpt-cv5512');
+  assert.ok(cvTpl, 'BUILT_IN_TEMPLATES must include tpl-thcs-thpt-cv5512');
+  assert.equal(cvTpl.structureType, 'thcs_thpt_cv5512');
 
+  const plan = createBasePlan();
+  plan.templateType = 'thcs_thpt_cv5512';
+  plan.inputSnapshot.templateId = 'tpl-thcs-thpt-cv5512';
 
+  const prompt = buildGeneratePlanPrompt(plan.inputSnapshot, cvTpl);
+  assert.ok(prompt.includes('PHỤ LỤC IV — CÔNG VĂN 5512/BGDĐT-GDTrH'));
+  assert.ok(prompt.includes('Xác định vấn đề/nhiệm vụ học tập/Mở đầu'));
 
+  const model = prepareDocxExportModel(plan, 'all');
+  assert.equal(model.isCv5512Appendix4, true);
+
+  const objStruct = buildObjectivesExportStructure(plan);
+  assert.equal(objStruct.sectionTitle, 'I. MỤC TIÊU');
+  assert.equal(objStruct.knowledgeHeading, '1. Về kiến thức:');
+  assert.equal(objStruct.competencyHeading, '2. Về năng lực:');
+  assert.equal(objStruct.qualityHeading, '3. Về phẩm chất:');
+
+  const { doc } = createLessonPlanDocxDocument(plan, 'all', createDefaultSettings());
+  const buf = await Packer.toBuffer(doc);
+  let offset = 0;
+  let xml = '';
+  while (offset + 30 < buf.length) {
+    if (buf.readUInt32LE(offset) !== 0x04034b50) break;
+    const method = buf.readUInt16LE(offset + 8);
+    const compSize = buf.readUInt32LE(offset + 18);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const name = buf.subarray(offset + 30, offset + 30 + nameLen).toString('utf8');
+    const dataStart = offset + 30 + nameLen + extraLen;
+    const data = buf.subarray(dataStart, dataStart + compSize);
+    if (name === 'word/document.xml') {
+      xml = (method === 8 ? inflateRawSync(data) : data).toString('utf8');
+      break;
+    }
+    offset = dataStart + compSize;
+  }
+
+  assert.ok(xml.includes('1. Về kiến thức:'));
+  assert.ok(xml.includes('b) Nội dung:'));
+  assert.ok(xml.includes('c) Sản phẩm:'));
+  assert.ok(xml.includes('- Giao nhiệm vụ học tập:'));
+  assert.ok(xml.includes('- Thực hiện nhiệm vụ:'));
+  assert.ok(xml.includes('- Báo cáo, thảo luận:'));
+  assert.ok(xml.includes('- Kết luận, nhận định:'));
+  assert.ok(xml.includes('DUYỆT CỦA TỔ CHUYÊN MÔN'));
+});
+
+test('safeReadJsonResponse parses JSON and safely handles non-JSON HTTP 504/502 proxy errors', async () => {
+  const { safeReadJsonResponse } = await import('./http');
+
+  const okRes = new Response(JSON.stringify({ jobId: 'job-1', status: 'generating' }), {
+    status: 202,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const okParsed = await safeReadJsonResponse<{ jobId: string; status: string }>(okRes);
+  assert.equal(okParsed.ok, true);
+  assert.equal(okParsed.status, 202);
+  assert.equal(okParsed.data?.jobId, 'job-1');
+
+  const htmlTimeoutRes = new Response('<html><body>504 Gateway Time-out</body></html>', {
+    status: 504,
+    headers: { 'Content-Type': 'text/html' },
+  });
+  const timeoutParsed = await safeReadJsonResponse<{ message?: string }>(htmlTimeoutRes);
+  assert.equal(timeoutParsed.ok, false);
+  assert.equal(timeoutParsed.status, 504);
+  assert.equal(timeoutParsed.data, null);
+  assert.match(timeoutParsed.fallbackErrorMessage, /HTTP 504/);
+});
 

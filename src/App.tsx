@@ -368,10 +368,15 @@ export default function App() {
   // Template actions
   const handleUseTemplate = (tpl: LessonTemplate) => {
     const base = createInitialLessonInput(profile);
+    const resolvedLevel =
+      (tpl.structureType === 'thcs_thpt_cv5512' || tpl.structureType === 'thcs_thpt_tien_trinh') &&
+      (profile.defaultLevel === 'thcs' || profile.defaultLevel === 'thpt')
+        ? profile.defaultLevel
+        : tpl.level;
     setWizardInput({
       ...base,
-      level: tpl.level,
-      minutesPerPeriod: profile.defaultMinutesByLevel[tpl.level] ?? 45,
+      level: resolvedLevel,
+      minutesPerPeriod: profile.defaultMinutesByLevel[resolvedLevel] ?? 45,
       templateId: tpl.id,
       sequenceMode: tpl.defaultSequenceMode,
     });

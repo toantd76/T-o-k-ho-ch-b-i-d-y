@@ -45,6 +45,22 @@ function formatTemplateDescription(template?: LessonTemplate): string {
   return `${template.name} (${template.structureType}): ${template.description}. Các phần chính: ${template.sectionsPreview.join(' -> ')}`;
 }
 
+function buildCv5512TemplateGuidance(template?: LessonTemplate): string {
+  if (template?.structureType !== 'thcs_thpt_cv5512') return '';
+  return `KHUNG KẾ HOẠCH BÀI DẠY CHUẨN PHỤ LỤC IV — CÔNG VĂN 5512/BGDĐT-GDTrH (BẮT BUỘC):
+- Phần I. Mục tiêu: Trình bày đầy đủ 3 mục (1. Về kiến thức, 2. Về năng lực gồm năng lực đặc thù + năng lực chung, 3. Về phẩm chất) gắn với yêu cầu cần đạt của chương trình.
+- Phần II. Thiết bị dạy học và học liệu: Nêu cụ thể thiết bị và học liệu sử dụng trong từng hoạt động để hình thành phẩm chất, năng lực tương ứng.
+- Phần III. Tiến trình dạy học: Tổ chức thành 4 hoạt động chuẩn Phụ lục IV (nếu nhiều tiết, phân bổ hợp lí vào từng tiết):
+  1. Hoạt động 1: Xác định vấn đề/nhiệm vụ học tập/Mở đầu — [Ghi tên thể hiện kết quả hoạt động] (phase: "khoi_dong")
+  2. Hoạt động 2: Hình thành kiến thức mới/giải quyết vấn đề/thực thi nhiệm vụ đặt ra từ Hoạt động 1 — [Ghi tên thể hiện kết quả hoạt động] (phase: "hinh_thanh_kien_thuc")
+  3. Hoạt động 3: Luyện tập — [Ghi tên thể hiện kết quả hoạt động] (phase: "luyen_tap"; hệ thống câu hỏi/bài tập đủ số lượng và thể loại)
+  4. Hoạt động 4: Vận dụng — [Ghi tên thể hiện kết quả hoạt động] (phase: "van_dung"; phát hiện/giải quyết vấn đề thực tiễn, chủ yếu giao thực hiện ngoài giờ học trên lớp và nộp báo cáo)
+- Cách viết d) Tổ chức thực hiện theo Ghi chú số 2 & số 4 Phụ lục IV:
+  * Không viết kịch bản lời thoại dài dòng của GV và HS; tập trung mô tả hành động cụ thể của GV (giao nhiệm vụ, yêu cầu, quan sát, theo dõi, hướng dẫn, nhận xét, gợi ý, kiểm tra, đánh giá) và hành động cụ thể của HS (thực hiện, đọc, nghe, nhìn, viết, trình bày, báo cáo, thí nghiệm, thực hành).
+  * Thể hiện rõ 4 bước: Giao nhiệm vụ học tập (steps.transfer) -> Thực hiện nhiệm vụ (steps.execute, kèm dự kiến khó khăn & hỗ trợ) -> Báo cáo, thảo luận (steps.report, nêu giải pháp sư phạm chọn nhóm/cá nhân báo cáo) -> Kết luận, nhận định (steps.conclude, phân tích sản phẩm học tập và chốt kiến thức/kĩ năng).
+  * Đánh giá thường xuyên qua hỏi - đáp, viết, thực hành, thí nghiệm, thuyết trình, sản phẩm học tập; thông báo trước tiêu chí nếu chấm điểm; không bắt buộc học sinh phải tự trang bị điện thoại di động.`;
+}
+
 function formatDocumentsBlock(input: LessonInput): string {
   if (!input.documents || input.documents.length === 0) {
     return 'Không có tài liệu đính kèm. Thiết kế dựa trên thông tin bài học giáo viên cung cấp và ghi rõ các điểm cần đối chiếu lại SGK thực tế vào itemsNeedingConfirmation.';
@@ -146,7 +162,7 @@ export function buildGeneratePlanPrompt(
 4. CÁC TÙY CHỌN SƯ PHẠM ĐÃ CHỌN:
 ${activeIntegrations.length > 0 ? activeIntegrations.map((x) => `- ${x}`).join('\n') : '- Thiết kế chuẩn, tinh gọn'}
 
-${opt.digitalCompetence ? `${buildNlsFrameworkPromptGuidance(input.grade, input.subject, opt.digitalCompetenceNotes)}\n\n` : ''}${opt.aiUsage ? `${buildAiFrameworkPromptGuidance(input.grade, input.subject, opt.aiToolName, opt.aiDeviceContext || input.studentDevices, opt.aiVerificationRule)}\n\n` : ''}5. TÀI LIỆU THAM KHẢO:
+${buildCv5512TemplateGuidance(template) ? `${buildCv5512TemplateGuidance(template)}\n\n` : ''}${opt.digitalCompetence ? `${buildNlsFrameworkPromptGuidance(input.grade, input.subject, opt.digitalCompetenceNotes)}\n\n` : ''}${opt.aiUsage ? `${buildAiFrameworkPromptGuidance(input.grade, input.subject, opt.aiToolName, opt.aiDeviceContext || input.studentDevices, opt.aiVerificationRule)}\n\n` : ''}5. TÀI LIỆU THAM KHẢO:
 ${formatDocumentsBlock(input)}
 
 6. YÊU CẦU CẤU TRÚC JSON TRẢ VỀ:

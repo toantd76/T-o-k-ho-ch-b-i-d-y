@@ -46,6 +46,7 @@ import {
   createPlanVersionSnapshot,
   validateLessonPlanCode,
 } from '../lib/lessonLogic';
+import { safeReadJsonResponse } from '../lib/http';
 import { exportLessonPlanToDocx } from '../lib/docxExporter';
 import { A4PreviewModal } from '../components/A4PreviewModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -322,9 +323,16 @@ export function EditorView({
         }),
         signal: controller.signal,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setAiErrorMsg(data.message || 'Không thể tạo đề xuất chỉnh sửa lúc này.');
+      const parsed = await safeReadJsonResponse<{
+        proposal?: AiActivityEditProposal;
+        message?: string;
+      }>(res);
+      if (!parsed.ok || !parsed.data?.proposal) {
+        setAiErrorMsg(
+          parsed.data?.message ||
+            parsed.fallbackErrorMessage ||
+            'Không thể tạo đề xuất chỉnh sửa lúc này.'
+        );
         return;
       }
       // Bảo vệ không ghi đè nếu giáo viên vừa sửa trực tiếp trong lúc AI đang chạy
@@ -334,7 +342,7 @@ export function EditorView({
           'info'
         );
       }
-      setAiEditProposal(data.proposal as AiActivityEditProposal);
+      setAiEditProposal(parsed.data.proposal);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setAiErrorMsg('Mất kết nối mạng khi gửi yêu cầu AI.');
@@ -374,13 +382,21 @@ export function EditorView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify(data.message || 'Không thể chạy kiểm tra chuyên môn AI.', 'error');
+      const parsed = await safeReadJsonResponse<{
+        issues?: ValidationIssue[];
+        message?: string;
+      }>(res);
+      if (!parsed.ok || !parsed.data?.issues) {
+        onNotify(
+          parsed.data?.message ||
+            parsed.fallbackErrorMessage ||
+            'Không thể chạy kiểm tra chuyên môn AI.',
+          'error'
+        );
         return;
       }
-      setAiReviewIssues(data.issues as ValidationIssue[]);
-      onNotify(`Đã hoàn tất rà soát chuyên môn (${data.issues.length} nhận xét).`, 'success');
+      setAiReviewIssues(parsed.data.issues);
+      onNotify(`Đã hoàn tất rà soát chuyên môn (${parsed.data.issues.length} nhận xét).`, 'success');
     } catch {
       onNotify('Lỗi kết nối khi kiểm tra chuyên môn bằng AI.', 'error');
     } finally {
@@ -406,12 +422,19 @@ export function EditorView({
         }),
         signal: controller.signal,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setGrammarError(data.message || 'Không thể kiểm tra chính tả và diễn đạt lúc này.');
+      const parsed = await safeReadJsonResponse<{
+        suggestions?: GrammarStyleSuggestion[];
+        message?: string;
+      }>(res);
+      if (!parsed.ok || !parsed.data) {
+        setGrammarError(
+          parsed.data?.message ||
+            parsed.fallbackErrorMessage ||
+            'Không thể kiểm tra chính tả và diễn đạt lúc này.'
+        );
         return;
       }
-      const list = (data.suggestions as GrammarStyleSuggestion[]) || [];
+      const list = parsed.data.suggestions || [];
       setGrammarSuggestions(list);
       onNotify(
         list.length > 0

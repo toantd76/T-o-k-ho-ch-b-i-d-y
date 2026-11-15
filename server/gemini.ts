@@ -222,17 +222,24 @@ const GeneratedPlanCoreSchema = LessonPlanSchema.omit({
   postLessonReflection: true,
 });
 
+export interface GeneratePlanProgress {
+  stage?: 'generating' | 'validating';
+  receivedChars?: number;
+}
+
 export async function generateLessonPlanFromAi(
   input: LessonInput,
   template: LessonTemplate | undefined,
-  externalSignal?: AbortSignal
+  externalSignal?: AbortSignal,
+  onProgress?: (update: GeneratePlanProgress) => void
 ): Promise<LessonPlan> {
   const ai = createGeminiClient();
   const model = getConfiguredModel();
   const prompt = buildGeneratePlanPrompt(input, template);
 
-  const runModel = async (userPrompt: string, signal: AbortSignal): Promise<string> => {
-    const response = await ai.models.generateContent({
+  const runModelStream = async (userPrompt: string, signal: AbortSignal): Promise<string> => {
+    let totalText = '';
+    const stream = await ai.models.generateContentStream({
       model,
       contents: userPrompt,
       config: {
@@ -244,15 +251,25 @@ export async function generateLessonPlanFromAi(
         abortSignal: signal,
       },
     });
-    return stripJsonFence(response.text ?? '');
+    for await (const chunk of stream) {
+      const piece = chunk.text ?? '';
+      if (piece) {
+        totalText += piece;
+        onProgress?.({ stage: 'generating', receivedChars: totalText.length });
+      }
+    }
+    return stripJsonFence(totalText);
   };
 
+  onProgress?.({ stage: 'generating', receivedChars: 0 });
   let rawJson = await callWithRetryAndTimeout(
-    (sig) => runModel(prompt, sig),
+    (sig) => runModelStream(prompt, sig),
     externalSignal,
-    150_000,
+    180_000,
     2
   );
+
+  onProgress?.({ stage: 'validating', receivedChars: rawJson.length });
 
   const tryParseAndValidate = (raw: string) => {
     try {
@@ -274,7 +291,7 @@ export async function generateLessonPlanFromAi(
   if (!validated.success) {
     const errList = validated.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
     const repairPrompt = buildRepairJsonPrompt(rawJson, errList);
-    rawJson = await callWithRetryAndTimeout((sig) => runModel(repairPrompt, sig), externalSignal, 60_000, 0);
+    rawJson = await callWithRetryAndTimeout((sig) => runModelStream(repairPrompt, sig), externalSignal, 60_000, 0);
     validated = tryParseAndValidate(rawJson);
   }
 
@@ -288,6 +305,12 @@ export async function generateLessonPlanFromAi(
 
   const now = new Date().toISOString();
   const core = validated.data;
+  const fallbackTemplateType =
+    input.level === 'tieu_hoc'
+      ? 'tieu_hoc_2_cot'
+      : input.templateId === 'tpl-thcs-thpt-cv5512'
+        ? 'thcs_thpt_cv5512'
+        : 'thcs_thpt_tien_trinh';
   const finalPlan: LessonPlan = {
     id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     title: core.title || input.lessonTitle,
@@ -296,7 +319,7 @@ export async function generateLessonPlanFromAi(
     updatedAt: now,
     schemaVersion: SCHEMA_VERSION,
     promptVersion: PROMPT_VERSION,
-    templateType: template?.structureType || (input.level === 'tieu_hoc' ? 'tieu_hoc_2_cot' : 'thcs_thpt_tien_trinh'),
+    templateType: template?.structureType || fallbackTemplateType,
     tags: [input.subject, `Lớp ${input.grade}`].filter(Boolean),
     isSample: false,
     inputSnapshot: input,

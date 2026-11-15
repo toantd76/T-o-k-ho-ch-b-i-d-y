@@ -54,6 +54,26 @@ export const BUILT_IN_TEMPLATES: LessonTemplate[] = [
     createdAt: '2026-01-01T00:00:00.000Z',
   },
   {
+    id: 'tpl-thcs-thpt-cv5512',
+    name: 'Kế hoạch bài dạy THCS / THPT (Phụ lục 4 - Công văn 5512)',
+    level: 'thpt',
+    structureType: 'thcs_thpt_cv5512',
+    description:
+      'Khung chuẩn Phụ lục IV (CV 5512/BGDĐT-GDTrH): 4 hoạt động (Xác định vấn đề/Mở đầu, Hình thành kiến thức mới, Luyện tập, Vận dụng); mỗi hoạt động có đủ 4 mục a) Mục tiêu, b) Nội dung, c) Sản phẩm, d) Tổ chức thực hiện.',
+    isBuiltIn: true,
+    referenceNote: 'Chuẩn khung Kế hoạch bài dạy Phụ lục IV — Công văn 5512/BGDĐT-GDTrH.',
+    sectionsPreview: [
+      'Phần đầu: Trường, Tổ, Giáo viên, Tên bài dạy, Môn học/Lớp, Thời gian thực hiện',
+      'I. Mục tiêu (1. Về kiến thức, 2. Về năng lực, 3. Về phẩm chất)',
+      'II. Thiết bị dạy học và học liệu',
+      'III. Tiến trình dạy học: 1. Xác định vấn đề/Mở đầu -> 2. Hình thành kiến thức mới -> 3. Luyện tập -> 4. Vận dụng (a) Mục tiêu, b) Nội dung, c) Sản phẩm, d) Tổ chức thực hiện 4 bước)',
+      'IV. Điều chỉnh sau bài dạy & Ký duyệt Tổ chuyên môn',
+      'Phụ lục: Phiếu học tập, Câu hỏi, Đáp án, Rubric, Đối chiếu mục tiêu',
+    ],
+    defaultSequenceMode: 'chia_tung_tiet',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
     id: 'tpl-tich-hop-stem',
     name: 'Kế hoạch bài học STEM / STEAM',
     level: 'thcs',

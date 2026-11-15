@@ -42,6 +42,7 @@ import {
   formatBytes,
   readSourceFile,
 } from '../lib/documentReader';
+import { safeReadJsonResponse } from '../lib/http';
 import {
   BOOK_SERIES_OPTIONS,
   EDUCATION_LEVEL_LABELS,
@@ -120,8 +121,13 @@ export function WizardView({
 
   // Generation states
   const [genStage, setGenStage] = useState<GenerationStage>('idle');
+  const [genProgress, setGenProgress] = useState<{
+    receivedChars: number;
+    elapsedSeconds: number;
+  } | null>(null);
   const [genError, setGenError] = useState<{ code?: string; message: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
 
   const totalMinutes = calculateTotalDuration(input.periodsCount, input.minutesPerPeriod);
   const totalUploadBytes = input.documents.reduce((acc, d) => acc + (d.sizeBytes || 0), 0);
@@ -340,43 +346,151 @@ export function WizardView({
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    activeJobIdRef.current = null;
     setGenError(null);
+    setGenProgress(null);
     setGenStage('processing_docs');
 
     const selectedTemplate = templates.find((t) => t.id === input.templateId);
 
+    const sleepWithAbort = (ms: number, signal: AbortSignal) =>
+      new Promise<void>((resolve, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new DOMException('Aborted', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+
     try {
-      await new Promise((r) => setTimeout(r, 180));
-      if (controller.signal.aborted) return;
+      await sleepWithAbort(180, controller.signal);
 
       setGenStage('sending');
-      const fetchPromise = fetch('/api/ai/generate-plan', {
+      const startRes = await fetch('/api/ai/generate-plan/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input, template: selectedTemplate }),
         signal: controller.signal,
       });
+      const startParsed = await safeReadJsonResponse<{
+        jobId?: string;
+        errorCode?: string;
+        message?: string;
+      }>(startRes);
 
-      setGenStage('generating');
-      const res = await fetchPromise;
-      if (controller.signal.aborted) return;
-
-      setGenStage('validating');
-      const data = await res.json();
-
-      if (!res.ok) {
+      if (!startParsed.ok || !startParsed.data?.jobId) {
         setGenStage('error');
         setGenError({
-          code: data.errorCode,
+          code: startParsed.data?.errorCode || `http_${startParsed.status}`,
           message:
-            data.message ||
-            'Không thể tạo kế hoạch lúc này. Dữ liệu nháp của thầy/cô vẫn được giữ nguyên.',
+            startParsed.data?.message ||
+            startParsed.fallbackErrorMessage ||
+            'Không thể khởi tạo phiên tạo kế hoạch lúc này. Dữ liệu nháp của thầy/cô vẫn được giữ nguyên.',
         });
         return;
       }
 
-      setGenStage('done');
-      onGenerateComplete(data.plan as LessonPlan);
+      const jobId = startParsed.data.jobId;
+      activeJobIdRef.current = jobId;
+      setGenStage('generating');
+      setGenProgress({ receivedChars: 0, elapsedSeconds: 0 });
+
+      let consecutiveTransientFailures = 0;
+      const MAX_TRANSIENT_FAILURES = 5;
+
+      while (!controller.signal.aborted) {
+        await sleepWithAbort(1200, controller.signal);
+
+        let pollRes: Response;
+        try {
+          pollRes = await fetch(`/api/ai/generate-plan/jobs/${encodeURIComponent(jobId)}`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal,
+          });
+        } catch (pollErr) {
+          if (pollErr instanceof DOMException && pollErr.name === 'AbortError') {
+            throw pollErr;
+          }
+          consecutiveTransientFailures += 1;
+          if (consecutiveTransientFailures >= MAX_TRANSIENT_FAILURES) {
+            throw pollErr;
+          }
+          continue;
+        }
+
+        const pollParsed = await safeReadJsonResponse<{
+          status?: 'generating' | 'validating' | 'done' | 'error' | 'cancelled';
+          receivedChars?: number;
+          elapsedMs?: number;
+          plan?: LessonPlan;
+          errorCode?: string;
+          message?: string;
+        }>(pollRes);
+
+        if (!pollParsed.ok) {
+          if (
+            (pollParsed.status === 502 ||
+              pollParsed.status === 503 ||
+              pollParsed.status === 504 ||
+              !pollParsed.data) &&
+            consecutiveTransientFailures < MAX_TRANSIENT_FAILURES
+          ) {
+            consecutiveTransientFailures += 1;
+            continue;
+          }
+          setGenStage('error');
+          setGenError({
+            code: pollParsed.data?.errorCode || `http_${pollParsed.status}`,
+            message:
+              pollParsed.data?.message ||
+              pollParsed.fallbackErrorMessage ||
+              'Không thể hoàn tất tạo kế hoạch lúc này. Dữ liệu nháp của thầy/cô vẫn được giữ nguyên.',
+          });
+          return;
+        }
+
+        consecutiveTransientFailures = 0;
+        const jobData = pollParsed.data;
+        if (!jobData) continue;
+
+        if (typeof jobData.elapsedMs === 'number' || typeof jobData.receivedChars === 'number') {
+          setGenProgress({
+            receivedChars: jobData.receivedChars ?? 0,
+            elapsedSeconds: Math.max(0, Math.round((jobData.elapsedMs ?? 0) / 1000)),
+          });
+        }
+
+        if (jobData.status === 'validating') {
+          setGenStage('validating');
+        } else if (jobData.status === 'generating') {
+          setGenStage('generating');
+        } else if (jobData.status === 'done' && jobData.plan) {
+          setGenStage('done');
+          onGenerateComplete(jobData.plan);
+          return;
+        } else if (jobData.status === 'error') {
+          setGenStage('error');
+          setGenError({
+            code: jobData.errorCode || 'ai_error',
+            message:
+              jobData.message ||
+              'Không thể tạo kế hoạch lúc này. Dữ liệu nháp của thầy/cô vẫn được giữ nguyên.',
+          });
+          return;
+        } else if (jobData.status === 'cancelled') {
+          setGenStage('idle');
+          return;
+        }
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         setGenStage('idle');
@@ -391,13 +505,23 @@ export function WizardView({
       });
     } finally {
       abortControllerRef.current = null;
+      activeJobIdRef.current = null;
     }
   };
 
   const handleStopGeneration = () => {
+    const jobId = activeJobIdRef.current;
+    if (jobId) {
+      fetch(`/api/ai/generate-plan/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE',
+        keepalive: true,
+      }).catch(() => undefined);
+      activeJobIdRef.current = null;
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setGenStage('idle');
+      setGenProgress(null);
     }
   };
 
@@ -416,6 +540,7 @@ export function WizardView({
       overviewNote: '',
     }));
 
+    const isCv5512 = selectedTemplate?.structureType === 'thcs_thpt_cv5512';
     const activities = sessions.flatMap((sess) => {
       const p1 = Math.max(5, Math.round(sess.durationMinutes * 0.15));
       const p2 = Math.max(10, Math.round(sess.durationMinutes * 0.4));
@@ -428,16 +553,30 @@ export function WizardView({
           sessionNumber: sess.sessionNumber,
           order: 1,
           phase: 'khoi_dong' as const,
-          title: `Khởi động (Tiết ${sess.sessionNumber})`,
+          title: isCv5512
+            ? `1. Hoạt động 1: Xác định vấn đề/nhiệm vụ học tập/Mở đầu (Tiết ${sess.sessionNumber})`
+            : `Khởi động (Tiết ${sess.sessionNumber})`,
           durationMinutes: p1,
           objectiveIds: ['obj-1'],
-          taskContent: 'Đặt vấn đề và huy động kiến thức nền liên quan tới bài học.',
-          expectedProduct: 'Câu trả lời hoặc dự đoán ban đầu của học sinh.',
+          taskContent: isCv5512
+            ? 'HS quan sát/xử lí tình huống mở đầu để xác định vấn đề cần giải quyết trong bài học.'
+            : 'Đặt vấn đề và huy động kiến thức nền liên quan tới bài học.',
+          expectedProduct: isCv5512
+            ? 'Kết quả xử lí tình huống ban đầu và phát biểu được vấn đề/nhiệm vụ học tập tiếp theo.'
+            : 'Câu trả lời hoặc dự đoán ban đầu của học sinh.',
           steps: {
-            transfer: 'GV nêu tình huống mở đầu và yêu cầu thực hiện.',
-            execute: 'HS suy nghĩ cá nhân / trao đổi nhanh.',
-            report: '1–2 HS chia sẻ ý kiến.',
-            conclude: 'GV kết nối vào nội dung trọng tâm của tiết học.',
+            transfer: isCv5512
+              ? 'GV giao nhiệm vụ học tập qua tình huống/câu hỏi mở đầu với học liệu cụ thể để tất cả HS nắm rõ yêu cầu.'
+              : 'GV nêu tình huống mở đầu và yêu cầu thực hiện.',
+            execute: isCv5512
+              ? 'HS thực hiện nhiệm vụ cá nhân/cặp đôi; GV theo dõi, gợi ý khi HS gặp lúng túng.'
+              : 'HS suy nghĩ cá nhân / trao đổi nhanh.',
+            report: isCv5512
+              ? 'GV tổ chức, điều hành; 1–2 HS trình bày, báo cáo kết quả ban đầu và các HS khác nhận xét.'
+              : '1–2 HS chia sẻ ý kiến.',
+            conclude: isCv5512
+              ? 'GV nhận xét sản phẩm học tập của HS, làm rõ vấn đề cần giải quyết và chuyển giao nhiệm vụ vào Hoạt động 2.'
+              : 'GV kết nối vào nội dung trọng tâm của tiết học.',
           },
           teacherPrompts: 'Em đã biết gì về nội dung này ở bài trước?',
           studentActions: 'Quan sát, trả lời câu hỏi gợi mở.',
@@ -453,16 +592,28 @@ export function WizardView({
           sessionNumber: sess.sessionNumber,
           order: 2,
           phase: 'hinh_thanh_kien_thuc' as const,
-          title: `Khám phá kiến thức trọng tâm (Tiết ${sess.sessionNumber})`,
+          title: isCv5512
+            ? `2. Hoạt động 2: Hình thành kiến thức mới/Giải quyết vấn đề (Tiết ${sess.sessionNumber})`
+            : `Khám phá kiến thức trọng tâm (Tiết ${sess.sessionNumber})`,
           durationMinutes: p2,
           objectiveIds: ['obj-1'],
-          taskContent: input.coreContent || 'Tìm hiểu nội dung cốt lõi theo phiếu học tập.',
-          expectedProduct: 'Kết quả hoàn thành nhiệm vụ khám phá.',
+          taskContent: input.coreContent || 'Tìm hiểu nội dung cốt lõi theo SGK và phiếu học tập.',
+          expectedProduct: isCv5512
+            ? 'Nội dung kiến thức mới/kết quả giải quyết vấn đề học sinh viết ra, trình bày được.'
+            : 'Kết quả hoàn thành nhiệm vụ khám phá.',
           steps: {
-            transfer: 'GV giao nhiệm vụ và hướng dẫn tiêu chí cần đạt.',
-            execute: 'HS thực hiện nhiệm vụ theo nhóm hoặc cá nhân.',
-            report: 'Đại diện HS trình bày, các bạn nhận xét.',
-            conclude: 'GV chuẩn hóa kiến thức trọng tâm.',
+            transfer: isCv5512
+              ? 'GV giao nhiệm vụ làm việc với SGK, thiết bị dạy học/học liệu và thông báo tiêu chí sản phẩm cần đạt.'
+              : 'GV giao nhiệm vụ và hướng dẫn tiêu chí cần đạt.',
+            execute: isCv5512
+              ? 'HS đọc/quan sát/thực hành theo nhóm để hoàn thành nhiệm vụ; GV theo dõi, phát hiện khó khăn và hỗ trợ kịp thời.'
+              : 'HS thực hiện nhiệm vụ theo nhóm hoặc cá nhân.',
+            report: isCv5512
+              ? 'GV lựa chọn một số nhóm báo cáo sản phẩm; điều hành HS thảo luận, phản biện và bổ sung.'
+              : 'Đại diện HS trình bày, các bạn nhận xét.',
+            conclude: isCv5512
+              ? 'GV phân tích sản phẩm học tập, nhận xét quá trình thực hiện và chuẩn hóa kiến thức, kĩ năng để HS ghi nhận.'
+              : 'GV chuẩn hóa kiến thức trọng tâm.',
           },
           teacherPrompts: 'Hãy giải thích cơ sở cho kết luận vừa tìm được.',
           studentActions: 'Đọc tài liệu, thảo luận và ghi nhận kết quả.',
@@ -478,16 +629,28 @@ export function WizardView({
           sessionNumber: sess.sessionNumber,
           order: 3,
           phase: 'luyen_tap' as const,
-          title: `Luyện tập (Tiết ${sess.sessionNumber})`,
+          title: isCv5512
+            ? `3. Hoạt động 3: Luyện tập (Tiết ${sess.sessionNumber})`
+            : `Luyện tập (Tiết ${sess.sessionNumber})`,
           durationMinutes: p3,
           objectiveIds: ['obj-1'],
-          taskContent: 'Thực hành giải quyết bài tập củng cố kiến thức vừa học.',
-          expectedProduct: 'Bài làm hoàn chỉnh của học sinh.',
+          taskContent: 'Thực hành giải quyết hệ thống câu hỏi, bài tập củng cố kiến thức và kĩ năng vừa học.',
+          expectedProduct: isCv5512
+            ? 'Đáp án, lời giải bài tập hoặc sản phẩm thực hành do HS thực hiện.'
+            : 'Bài làm hoàn chỉnh của học sinh.',
           steps: {
-            transfer: 'GV giao bài tập luyện tập.',
-            execute: 'HS làm bài cá nhân và kiểm tra chéo.',
-            report: 'HS trình bày lời giải.',
-            conclude: 'GV sửa lỗi sai phổ biến và chốt cách làm.',
+            transfer: isCv5512
+              ? 'GV giao hệ thống câu hỏi/bài tập luyện tập phù hợp yêu cầu phát triển kĩ năng.'
+              : 'GV giao bài tập luyện tập.',
+            execute: isCv5512
+              ? 'HS thực hiện cá nhân và trao đổi kiểm tra chéo; GV quan sát, hướng dẫn sửa lỗi sai thường gặp.'
+              : 'HS làm bài cá nhân và kiểm tra chéo.',
+            report: isCv5512
+              ? 'GV chọn HS trình bày lời giải/báo cáo kết quả; lớp đối chiếu, nhận xét.'
+              : 'HS trình bày lời giải.',
+            conclude: isCv5512
+              ? 'GV nhận xét, đánh giá kết quả luyện tập và chốt quy trình thực hiện chuẩn.'
+              : 'GV sửa lỗi sai phổ biến và chốt cách làm.',
           },
           teacherPrompts: 'Bước nào dễ xảy ra sai sót nhất trong bài tập này?',
           studentActions: 'Giải bài tập và đối chiếu đáp án.',
@@ -503,20 +666,34 @@ export function WizardView({
           sessionNumber: sess.sessionNumber,
           order: 4,
           phase: 'van_dung' as const,
-          title: `Vận dụng & Tổng kết (Tiết ${sess.sessionNumber})`,
+          title: isCv5512
+            ? `4. Hoạt động 4: Vận dụng (Tiết ${sess.sessionNumber})`
+            : `Vận dụng & Tổng kết (Tiết ${sess.sessionNumber})`,
           durationMinutes: p4,
           objectiveIds: ['obj-1'],
-          taskContent: 'Vận dụng kiến thức vào tình huống thực tiễn và đánh giá nhanh cuối tiết.',
-          expectedProduct: 'Phương án giải quyết tình huống thực tế.',
+          taskContent: isCv5512
+            ? 'HS phát hiện/đề xuất và giải quyết tình huống thực tiễn gắn với nội dung bài học.'
+            : 'Vận dụng kiến thức vào tình huống thực tiễn và đánh giá nhanh cuối tiết.',
+          expectedProduct: isCv5512
+            ? 'Báo cáo hoặc sản phẩm vận dụng giải quyết vấn đề thực tiễn theo yêu cầu hình thức và nội dung.'
+            : 'Phương án giải quyết tình huống thực tế.',
           steps: {
-            transfer: 'GV nêu bài toán vận dụng.',
-            execute: 'HS thảo luận nhanh phương án.',
-            report: 'HS chia sẻ câu trả lời.',
-            conclude: 'GV tổng kết bài và hướng dẫn nhiệm vụ về nhà.',
+            transfer: isCv5512
+              ? 'GV giao nhiệm vụ vận dụng thực tiễn để HS thực hiện (chủ yếu ngoài giờ học trên lớp) và quy định thời điểm nộp báo cáo.'
+              : 'GV nêu bài toán vận dụng.',
+            execute: isCv5512
+              ? 'HS xác định hướng giải quyết ở lớp và thực hiện hoàn chỉnh ngoài giờ học theo hướng dẫn của GV.'
+              : 'HS thảo luận nhanh phương án.',
+            report: isCv5512
+              ? 'HS nộp báo cáo và chia sẻ, trao đổi vào thời điểm phù hợp trong kế hoạch dạy học.'
+              : 'HS chia sẻ câu trả lời.',
+            conclude: isCv5512
+              ? 'GV nhận xét, đánh giá sản phẩm vận dụng và định hướng học tập tiếp theo.'
+              : 'GV tổng kết bài và hướng dẫn nhiệm vụ về nhà.',
           },
           teacherPrompts: 'Kiến thức hôm nay áp dụng vào tình huống nào quanh em?',
           studentActions: 'Trả lời câu hỏi vận dụng.',
-          groupOrganization: 'Cả lớp.',
+          groupOrganization: isCv5512 ? 'Thực hiện cá nhân/nhóm ngoài giờ lên lớp.' : 'Cả lớp.',
           assessmentCriteria: 'Nêu được hướng vận dụng hợp lý.',
           commonMistakesAndSupport: '',
           extensionTask: '',
@@ -555,6 +732,39 @@ export function WizardView({
           needsConfirmation: !input.learningOutcomesInput.trim(),
           sourceRef: '',
         },
+        {
+          id: 'obj-2',
+          code: 'MT2',
+          category: 'nang_luc_dac_thu',
+          title: `Năng lực môn ${input.subject || 'học'}`,
+          frameworkCode: '',
+          description: `Vận dụng được kiến thức, kĩ năng cốt lõi của bài "${input.lessonTitle}" để thực hiện nhiệm vụ học tập.`,
+          sourceType: 'de_xuat',
+          needsConfirmation: true,
+          sourceRef: '',
+        },
+        {
+          id: 'obj-3',
+          code: 'MT3',
+          category: 'nang_luc_chung',
+          title: 'Năng lực tự chủ và tự học; giao tiếp và hợp tác',
+          frameworkCode: '',
+          description: 'Chủ động tìm hiểu học liệu, phối hợp trao đổi nhóm và trình bày kết quả thực hiện nhiệm vụ.',
+          sourceType: 'de_xuat',
+          needsConfirmation: true,
+          sourceRef: '',
+        },
+        {
+          id: 'obj-4',
+          code: 'MT4',
+          category: 'pham_chat',
+          title: 'Chăm chỉ, trách nhiệm',
+          frameworkCode: '',
+          description: 'Tích cực, tự giác tham gia hoạt động học tập và có trách nhiệm hoàn thành sản phẩm được giao.',
+          sourceType: 'de_xuat',
+          needsConfirmation: true,
+          sourceRef: '',
+        },
       ],
       resources: [
         {
@@ -585,6 +795,27 @@ export function WizardView({
           activityIds: activities.map((a) => a.id),
           productEvidence: 'Bài làm và câu trả lời của học sinh',
           assessmentMethod: 'Quan sát và hỏi đáp',
+        },
+        {
+          objectiveId: 'obj-2',
+          objectiveCode: 'MT2',
+          activityIds: activities.slice(1).map((a) => a.id),
+          productEvidence: 'Sản phẩm thực hành và kết quả giải quyết nhiệm vụ',
+          assessmentMethod: 'Đánh giá qua sản phẩm học tập',
+        },
+        {
+          objectiveId: 'obj-3',
+          objectiveCode: 'MT3',
+          activityIds: activities.map((a) => a.id),
+          productEvidence: 'Kết quả thảo luận và phần trình bày báo cáo',
+          assessmentMethod: 'Quan sát quá trình hợp tác',
+        },
+        {
+          objectiveId: 'obj-4',
+          objectiveCode: 'MT4',
+          activityIds: activities.map((a) => a.id),
+          productEvidence: 'Thái độ tham gia và mức độ hoàn thành nhiệm vụ',
+          assessmentMethod: 'Quan sát thường xuyên',
         },
       ],
       sourceReferences: input.documents.map((d) => ({
@@ -712,7 +943,11 @@ export function WizardView({
                     level: lvl,
                     minutesPerPeriod: defaultMins,
                     templateId:
-                      lvl === 'tieu_hoc' ? 'tpl-tieu-hoc-2-cot' : input.templateId,
+                      lvl === 'tieu_hoc'
+                        ? 'tpl-tieu-hoc-2-cot'
+                        : input.templateId === 'tpl-tieu-hoc-2-cot'
+                        ? 'tpl-thcs-thpt-standard'
+                        : input.templateId,
                   });
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -2177,7 +2412,14 @@ export function WizardView({
                   <span>
                     {genStage === 'processing_docs' && 'Đang xử lý tài liệu và ràng buộc thời lượng...'}
                     {genStage === 'sending' && 'Đang gửi yêu cầu tới máy chủ...'}
-                    {genStage === 'generating' && 'Đang tạo kế hoạch bài dạy theo cấu trúc...'}
+                    {genStage === 'generating' && (
+                      <>
+                        Đang tạo kế hoạch bài dạy theo cấu trúc...
+                        {genProgress && (genProgress.receivedChars > 0 || genProgress.elapsedSeconds > 0)
+                          ? ` (${(genProgress.receivedChars / 1024).toFixed(1)} KB · ${genProgress.elapsedSeconds}s)`
+                          : ''}
+                      </>
+                    )}
                     {genStage === 'validating' && 'Đang kiểm tra cấu trúc và liên kết mục tiêu...'}
                   </span>
                 </div>

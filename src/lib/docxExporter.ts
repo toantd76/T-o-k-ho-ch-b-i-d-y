@@ -286,7 +286,7 @@ export function createLessonPlanDocxDocument(
                     { bold: true }
                   ),
                   makeTableParagraph(
-                    `Tổ chuyên môn: ${input.departmentName || '....................'}`,
+                    `${model.isCv5512Appendix4 ? 'Tổ' : 'Tổ chuyên môn'}: ${input.departmentName || '....................'}`,
                     font,
                     sizePt,
                     lineSpacing
@@ -330,7 +330,9 @@ export function createLessonPlanDocxDocument(
         firstLineIndentTwips: 0,
       }),
       makeParagraph(
-        `Môn học / Hoạt động giáo dục: ${input.subject} · Lớp: ${input.grade} · Bộ sách: ${input.bookSeries || 'Không ghi'}`,
+        model.isCv5512Appendix4
+          ? `Môn học/Hoạt động giáo dục: ${input.subject}; lớp: ${input.grade}${input.bookSeries ? ` (${input.bookSeries})` : ''}`
+          : `Môn học / Hoạt động giáo dục: ${input.subject} · Lớp: ${input.grade} · Bộ sách: ${input.bookSeries || 'Không ghi'}`,
         font,
         sizePt,
         lineSpacing,
@@ -340,7 +342,7 @@ export function createLessonPlanDocxDocument(
         }
       ),
       makeParagraph(
-        `Thời lượng thực hiện: ${input.periodsCount} tiết (${model.totalMinutes} phút)`,
+        `${model.isCv5512Appendix4 ? 'Thời gian thực hiện' : 'Thời lượng thực hiện'}: ${input.periodsCount} tiết (${model.totalMinutes} phút)`,
         font,
         sizePt,
         lineSpacing,
@@ -604,6 +606,96 @@ export function createLessonPlanDocxDocument(
             ],
           })
         );
+      } else if (model.isCv5512Appendix4) {
+        // Mẫu THCS / THPT chuẩn Phụ lục 4 Công văn 5512/BGDĐT-GDTrH
+        for (const act of sessActivities) {
+          const mtDetailed = formatActivityObjectiveSummary(
+            act.objectiveIds,
+            plan.objectives,
+            'detailed'
+          );
+          children.push(
+            makeParagraph(`${act.title} (${act.durationMinutes} phút)`, font, sizePt, lineSpacing, {
+              bold: true,
+            }),
+            ...makeMultilineParagraphs(mtDetailed, font, sizePt, lineSpacing, 'a) Mục tiêu:'),
+            ...makeMultilineParagraphs(act.taskContent, font, sizePt, lineSpacing, 'b) Nội dung:'),
+            ...makeMultilineParagraphs(act.expectedProduct, font, sizePt, lineSpacing, 'c) Sản phẩm:'),
+            makeParagraph('d) Tổ chức thực hiện:', font, sizePt, lineSpacing, { bold: true }),
+            ...makeMultilineParagraphs(
+              act.steps.transfer,
+              font,
+              sizePt,
+              lineSpacing,
+              '- Giao nhiệm vụ học tập:'
+            ),
+            ...makeMultilineParagraphs(
+              act.steps.execute,
+              font,
+              sizePt,
+              lineSpacing,
+              '- Thực hiện nhiệm vụ:'
+            ),
+            ...makeMultilineParagraphs(
+              act.steps.report,
+              font,
+              sizePt,
+              lineSpacing,
+              '- Báo cáo, thảo luận:'
+            ),
+            ...makeMultilineParagraphs(
+              act.steps.conclude,
+              font,
+              sizePt,
+              lineSpacing,
+              '- Kết luận, nhận định:'
+            )
+          );
+          if (act.groupOrganization) {
+            children.push(
+              ...makeMultilineParagraphs(
+                act.groupOrganization,
+                font,
+                sizePt,
+                lineSpacing,
+                'Hình thức tổ chức / thời gian:'
+              )
+            );
+          }
+          if (act.assessmentCriteria) {
+            children.push(
+              ...makeMultilineParagraphs(
+                act.assessmentCriteria,
+                font,
+                sizePt,
+                lineSpacing,
+                'Đánh giá thường xuyên:'
+              )
+            );
+          }
+          if (act.commonMistakesAndSupport) {
+            children.push(
+              ...makeMultilineParagraphs(
+                act.commonMistakesAndSupport,
+                font,
+                sizePt,
+                lineSpacing,
+                'Dự kiến khó khăn & hỗ trợ:'
+              )
+            );
+          }
+          if (act.contingencyPlan) {
+            children.push(
+              ...makeMultilineParagraphs(
+                act.contingencyPlan,
+                font,
+                sizePt,
+                lineSpacing,
+                'Phương án dự phòng:'
+              )
+            );
+          }
+        }
       } else {
         // Mẫu THCS / THPT tiến trình 4 bước
         for (const act of sessActivities) {

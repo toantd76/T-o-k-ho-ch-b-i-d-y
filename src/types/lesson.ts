@@ -10,6 +10,7 @@ export type PlanStatus = 'nhap' | 'hoan_thien' | 'luu_tru' | 'thung_rac';
 export type TemplateStructureType =
   | 'tieu_hoc_2_cot'
   | 'thcs_thpt_tien_trinh'
+  | 'thcs_thpt_cv5512'
   | 'tich_hop_stem'
   | 'on_tap_chuyen_sau';
 
@@ -324,7 +325,13 @@ export const LessonPlanSchema = z.object({
   schemaVersion: z.number().int().default(SCHEMA_VERSION),
   promptVersion: z.string().default(PROMPT_VERSION),
   templateType: z
-    .enum(['tieu_hoc_2_cot', 'thcs_thpt_tien_trinh', 'tich_hop_stem', 'on_tap_chuyen_sau'])
+    .enum([
+      'tieu_hoc_2_cot',
+      'thcs_thpt_tien_trinh',
+      'thcs_thpt_cv5512',
+      'tich_hop_stem',
+      'on_tap_chuyen_sau',
+    ])
     .default('thcs_thpt_tien_trinh'),
   tags: z.array(z.string()).default([]),
   isSample: z.boolean().default(false),
@@ -364,6 +371,7 @@ export const LessonTemplateSchema = z.object({
   structureType: z.enum([
     'tieu_hoc_2_cot',
     'thcs_thpt_tien_trinh',
+    'thcs_thpt_cv5512',
     'tich_hop_stem',
     'on_tap_chuyen_sau',
   ]),

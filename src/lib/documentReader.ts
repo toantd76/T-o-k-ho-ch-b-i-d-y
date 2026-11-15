@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { SourceDocRole, SourceDocument } from '../types/lesson';
 import { sanitizePlainText } from './lessonLogic';
+import { safeReadJsonResponse } from './http';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -128,13 +129,21 @@ export async function extractPdfWithAiFallback(
       fileName: file.name,
     }),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.message || 'Không thể trích xuất PDF bằng AI lúc này.');
+  const parsed = await safeReadJsonResponse<{
+    extractedText?: string;
+    unreadableNotes?: string;
+    message?: string;
+  }>(res);
+  if (!parsed.ok || !parsed.data) {
+    throw new Error(
+      parsed.data?.message ||
+        parsed.fallbackErrorMessage ||
+        'Không thể trích xuất PDF bằng AI lúc này.'
+    );
   }
   return {
-    extractedText: sanitizePlainText(data.extractedText || ''),
-    unreadableNotes: data.unreadableNotes || '',
+    extractedText: sanitizePlainText(parsed.data.extractedText || ''),
+    unreadableNotes: parsed.data.unreadableNotes || '',
   };
 }
 
@@ -240,15 +249,20 @@ export async function readSourceFile(
         fileName: file.name,
       }),
     });
-    const data = await res.json();
-    if (!res.ok) {
+    const parsed = await safeReadJsonResponse<{
+      extractedText?: string;
+      unreadableNotes?: string;
+      message?: string;
+    }>(res);
+    if (!parsed.ok || !parsed.data) {
       return {
         doc: {
           ...baseDoc,
           status: 'warning',
           extractedText: '',
           unreadableNotes:
-            data.message ||
+            parsed.data?.message ||
+            parsed.fallbackErrorMessage ||
             'Chưa đọc tự động được ảnh (AI chưa sẵn sàng). Thầy/cô có thể gõ hoặc dán nội dung từ ảnh vào khung bên dưới.',
         },
         rawFile: file,
@@ -257,9 +271,9 @@ export async function readSourceFile(
     return {
       doc: {
         ...baseDoc,
-        extractedText: sanitizePlainText(data.extractedText || ''),
-        unreadableNotes: data.unreadableNotes || '',
-        status: data.unreadableNotes ? 'warning' : 'ready',
+        extractedText: sanitizePlainText(parsed.data.extractedText || ''),
+        unreadableNotes: parsed.data.unreadableNotes || '',
+        status: parsed.data.unreadableNotes ? 'warning' : 'ready',
       },
       rawFile: file,
     };

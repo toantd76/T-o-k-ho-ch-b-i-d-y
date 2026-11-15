@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   GrammarCheckScopeSchema,
   LessonInputSchema,
+  type LessonPlan,
   LessonPlanSchema,
   LessonTemplateSchema,
 } from './src/types/lesson.ts';
@@ -15,6 +16,7 @@ import {
   extractDocumentMediaWithAi,
   generateLessonPlanFromAi,
   getAiStatus,
+  isAiConfigured,
   reviewLessonPlanWithAi,
 } from './server/gemini.ts';
 
@@ -25,6 +27,38 @@ const isProduction = process.env.NODE_ENV === 'production';
 const rateBuckets = new Map<string, number[]>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
+
+interface GenerateJobState {
+  id: string;
+  status: 'generating' | 'validating' | 'done' | 'error' | 'cancelled';
+  createdAt: number;
+  updatedAt: number;
+  receivedChars: number;
+  plan?: LessonPlan;
+  errorCode?: string;
+  message?: string;
+  abortController: AbortController;
+}
+
+const generateJobs = new Map<string, GenerateJobState>();
+const JOB_TTL_MS = 15 * 60_000;
+
+function pruneExpiredJobs() {
+  const now = Date.now();
+  for (const [id, job] of generateJobs.entries()) {
+    if (now - job.updatedAt > JOB_TTL_MS && job.status !== 'generating' && job.status !== 'validating') {
+      generateJobs.delete(id);
+    }
+  }
+  if (generateJobs.size > 200) {
+    const oldest = Array.from(generateJobs.values())
+      .filter((j) => j.status === 'done' || j.status === 'error' || j.status === 'cancelled')
+      .sort((a, b) => a.updatedAt - b.updatedAt);
+    for (const j of oldest.slice(0, generateJobs.size - 200)) {
+      generateJobs.delete(j.id);
+    }
+  }
+}
 
 function aiRateLimiter(req: Request, res: Response, next: NextFunction) {
   const ip = req.ip || req.socket.remoteAddress || 'local';
@@ -107,6 +141,107 @@ async function startServer() {
 
   app.get('/api/ai/status', (_req, res) => {
     res.json(getAiStatus());
+  });
+
+  app.post('/api/ai/generate-plan/jobs', aiRateLimiter, (req, res) => {
+    const parsed = GeneratePlanBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        errorCode: 'invalid_input',
+        message: 'Thông tin bài học gửi lên chưa đầy đủ hoặc sai định dạng.',
+      });
+      return;
+    }
+    if (!isAiConfigured()) {
+      res.status(503).json({
+        errorCode: 'ai_not_configured',
+        message: 'Cần cấu hình kết nối AI trên máy chủ trước khi tạo hoặc chỉnh sửa bằng AI.',
+      });
+      return;
+    }
+
+    pruneExpiredJobs();
+    const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = Date.now();
+    const job: GenerateJobState = {
+      id: jobId,
+      status: 'generating',
+      createdAt: now,
+      updatedAt: now,
+      receivedChars: 0,
+      abortController: new AbortController(),
+    };
+    generateJobs.set(jobId, job);
+
+    generateLessonPlanFromAi(
+      parsed.data.input,
+      parsed.data.template,
+      job.abortController.signal,
+      (progress) => {
+        if (job.status === 'cancelled') return;
+        if (progress.stage) job.status = progress.stage;
+        if (typeof progress.receivedChars === 'number') {
+          job.receivedChars = progress.receivedChars;
+        }
+        job.updatedAt = Date.now();
+      }
+    )
+      .then((plan) => {
+        if (job.status === 'cancelled') return;
+        job.status = 'done';
+        job.plan = plan;
+        job.updatedAt = Date.now();
+      })
+      .catch((err) => {
+        if (job.status === 'cancelled') return;
+        if (err instanceof AiServiceError) {
+          job.status = err.code === 'aborted' ? 'cancelled' : 'error';
+          job.errorCode = err.code;
+          job.message = err.message;
+        } else {
+          job.status = 'error';
+          job.errorCode = 'network_error';
+          job.message = 'Có lỗi xử lý trên máy chủ. Vui lòng thử lại sau.';
+        }
+        job.updatedAt = Date.now();
+      });
+
+    res.status(202).json({
+      jobId: job.id,
+      status: job.status,
+    });
+  });
+
+  app.get('/api/ai/generate-plan/jobs/:jobId', (req, res) => {
+    const job = generateJobs.get(req.params.jobId);
+    if (!job) {
+      res.status(404).json({
+        errorCode: 'job_not_found',
+        message:
+          'Phiên tạo kế hoạch đã hết hạn hoặc máy chủ vừa khởi động lại. Dữ liệu nhập của thầy/cô vẫn được giữ nguyên để thử lại.',
+      });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      receivedChars: job.receivedChars,
+      elapsedMs: Date.now() - job.createdAt,
+      plan: job.status === 'done' ? job.plan : undefined,
+      errorCode: job.errorCode,
+      message: job.message,
+    });
+  });
+
+  app.delete('/api/ai/generate-plan/jobs/:jobId', (req, res) => {
+    const job = generateJobs.get(req.params.jobId);
+    if (job) {
+      job.status = 'cancelled';
+      job.updatedAt = Date.now();
+      job.abortController.abort(new Error('aborted'));
+    }
+    res.json({ ok: true });
   });
 
   app.post('/api/ai/generate-plan', aiRateLimiter, async (req, res) => {

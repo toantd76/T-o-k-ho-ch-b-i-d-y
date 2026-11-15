@@ -386,6 +386,7 @@ export interface DocxExportSectionModel {
   includeTeacherAiPrompts: boolean;
   includeEvidenceAndSources: boolean;
   isPrimaryTwoColumn: boolean;
+  isCv5512Appendix4: boolean;
   totalMinutes: number;
   normalizedFileName: string;
 }
@@ -419,6 +420,7 @@ export function prepareDocxExportModel(
       (scope === 'all' || scope === 'teacher_guide_only') && plan.teacherAiPrompts.length > 0,
     includeEvidenceAndSources: scope === 'all' || scope === 'teacher_guide_only',
     isPrimaryTwoColumn: plan.templateType === 'tieu_hoc_2_cot',
+    isCv5512Appendix4: plan.templateType === 'thcs_thpt_cv5512',
     totalMinutes,
     normalizedFileName: `${sanitizeFileName(plan.title)}${suffixMap[scope]}.docx`,
   };
@@ -605,18 +607,20 @@ export function buildObjectivesExportStructure(plan: LessonPlan): ObjectivesExpo
     .filter((o) => o.category === 'pham_chat')
     .map(formatObjectiveDisplayItem);
 
+  const isCv5512 = plan.templateType === 'thcs_thpt_cv5512';
+
   return {
-    sectionTitle: 'I. MỤC TIÊU BÀI HỌC',
-    knowledgeHeading: '1.1. Kiến thức:',
+    sectionTitle: isCv5512 ? 'I. MỤC TIÊU' : 'I. MỤC TIÊU BÀI HỌC',
+    knowledgeHeading: isCv5512 ? '1. Về kiến thức:' : '1.1. Kiến thức:',
     knowledgeItems,
-    competencyHeading: '1.2. Định hướng phát triển năng lực:',
+    competencyHeading: isCv5512 ? '2. Về năng lực:' : '1.2. Định hướng phát triển năng lực:',
     specificHeading: buildSpecificCompetencyHeading(plan),
     specificItems,
     generalHeading: 'b) Năng lực chung:',
     generalItems,
     extraIntegrationHeading: 'c) Nội dung tích hợp khác:',
     extraIntegrationItems,
-    qualityHeading: '1.3. Phẩm chất:',
+    qualityHeading: isCv5512 ? '3. Về phẩm chất:' : '1.3. Phẩm chất:',
     qualityItems,
   };
 }

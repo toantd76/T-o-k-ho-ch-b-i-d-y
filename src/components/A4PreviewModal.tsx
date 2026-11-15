@@ -361,7 +361,10 @@ export function A4PreviewModal({
                       <p className="font-bold">
                         Trường: {input.schoolName || '....................'}
                       </p>
-                      <p>Tổ chuyên môn: {input.departmentName || '....................'}</p>
+                      <p>
+                        {model.isCv5512Appendix4 ? 'Tổ' : 'Tổ chuyên môn'}:{' '}
+                        {input.departmentName || '....................'}
+                      </p>
                     </td>
                     <td className="w-[48%]">
                       <p className="font-bold">
@@ -380,11 +383,13 @@ export function A4PreviewModal({
                 TÊN BÀI DẠY: {plan.title.toUpperCase()}
               </p>
               <p className="preview-centered">
-                Môn học / Hoạt động giáo dục: {input.subject} · Lớp: {input.grade} · Bộ sách:{' '}
-                {input.bookSeries || 'Không ghi'}
+                {model.isCv5512Appendix4
+                  ? `Môn học/Hoạt động giáo dục: ${input.subject}; lớp: ${input.grade}${input.bookSeries ? ` (${input.bookSeries})` : ''}`
+                  : `Môn học / Hoạt động giáo dục: ${input.subject} · Lớp: ${input.grade} · Bộ sách: ${input.bookSeries || 'Không ghi'}`}
               </p>
               <p className="preview-centered italic">
-                Thời lượng thực hiện: {input.periodsCount} tiết ({model.totalMinutes} phút)
+                {model.isCv5512Appendix4 ? 'Thời gian thực hiện' : 'Thời lượng thực hiện'}:{' '}
+                {input.periodsCount} tiết ({model.totalMinutes} phút)
               </p>
             </div>
           )}
@@ -607,6 +612,76 @@ export function A4PreviewModal({
                             })}
                           </tbody>
                         </table>
+                      </div>
+                    ) : model.isCv5512Appendix4 ? (
+                      <div>
+                        {sessActs.map((act) => {
+                          const mtDetailed = formatActivityObjectiveSummary(
+                            act.objectiveIds,
+                            plan.objectives,
+                            'detailed'
+                          );
+                          return (
+                            <div key={act.id} className="print-avoid-break">
+                              <p className="font-bold">
+                                {act.title} ({act.durationMinutes} phút)
+                              </p>
+                              <MultilineParagraphs
+                                text={mtDetailed}
+                                boldPrefix="a) Mục tiêu:"
+                              />
+                              <MultilineParagraphs
+                                text={act.taskContent}
+                                boldPrefix="b) Nội dung:"
+                              />
+                              <MultilineParagraphs
+                                text={act.expectedProduct}
+                                boldPrefix="c) Sản phẩm:"
+                              />
+                              <p className="font-bold">d) Tổ chức thực hiện:</p>
+                              <MultilineParagraphs
+                                text={act.steps.transfer}
+                                boldPrefix="- Giao nhiệm vụ học tập:"
+                              />
+                              <MultilineParagraphs
+                                text={act.steps.execute}
+                                boldPrefix="- Thực hiện nhiệm vụ:"
+                              />
+                              <MultilineParagraphs
+                                text={act.steps.report}
+                                boldPrefix="- Báo cáo, thảo luận:"
+                              />
+                              <MultilineParagraphs
+                                text={act.steps.conclude}
+                                boldPrefix="- Kết luận, nhận định:"
+                              />
+                              {act.groupOrganization && (
+                                <MultilineParagraphs
+                                  text={act.groupOrganization}
+                                  boldPrefix="Hình thức tổ chức / thời gian:"
+                                />
+                              )}
+                              {act.assessmentCriteria && (
+                                <MultilineParagraphs
+                                  text={act.assessmentCriteria}
+                                  boldPrefix="Đánh giá thường xuyên:"
+                                />
+                              )}
+                              {act.commonMistakesAndSupport && (
+                                <MultilineParagraphs
+                                  text={act.commonMistakesAndSupport}
+                                  boldPrefix="Dự kiến khó khăn & hỗ trợ:"
+                                />
+                              )}
+                              {act.contingencyPlan && (
+                                <MultilineParagraphs
+                                  text={act.contingencyPlan}
+                                  boldPrefix="Phương án dự phòng:"
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div>
