@@ -880,3 +880,88 @@ test('safeReadJsonResponse parses JSON and safely handles non-JSON HTTP 504/502 
   assert.match(timeoutParsed.fallbackErrorMessage, /HTTP 504/);
 });
 
+test('createUserGuideDocxDocument generates official Decree 30/2020/ND-CP administrative DOCX with 13pt Times New Roman formatting', async () => {
+  const { Packer } = await import('docx');
+  const { inflateRawSync } = await import('node:zlib');
+  const { createDefaultProfile, createDefaultSettings } = await import('./templatesAndSamples');
+  const {
+    createDefaultAdminGuideMetadata,
+    createUserGuideDocxDocument,
+  } = await import('./userGuideDocx');
+
+  const profile = createDefaultProfile();
+  const settings = createDefaultSettings();
+  const metadata = createDefaultAdminGuideMetadata(profile);
+  const { doc, fileName } = createUserGuideDocxDocument(metadata, settings);
+
+  assert.equal(fileName, 'Huong_dan_su_dung_Ke_Hoach_Bai_Day_AI.docx');
+
+  const buf = await Packer.toBuffer(doc);
+  let offset = 0;
+  const files: Record<string, string> = {};
+  while (offset + 30 < buf.length) {
+    if (buf.readUInt32LE(offset) !== 0x04034b50) break;
+    const method = buf.readUInt16LE(offset + 8);
+    const compSize = buf.readUInt32LE(offset + 18);
+    const nameLen = buf.readUInt16LE(offset + 26);
+    const extraLen = buf.readUInt16LE(offset + 28);
+    const name = buf.subarray(offset + 30, offset + 30 + nameLen).toString('utf8');
+    const dataStart = offset + 30 + nameLen + extraLen;
+    const data = buf.subarray(dataStart, dataStart + compSize);
+    if (name.endsWith('.xml')) {
+      files[name] = (method === 8 ? inflateRawSync(data) : data).toString('utf8');
+    }
+    offset = dataStart + compSize;
+  }
+
+  const xml = files['word/document.xml'] || '';
+  assert.ok(xml.length > 0, 'word/document.xml must exist');
+
+  // Administrative document elements (Nghị định 30/2020/NĐ-CP)
+  assert.ok(xml.includes('TRƯỜNG THPT ĐẮK SONG'));
+  assert.ok(xml.includes('CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM'));
+  assert.ok(xml.includes('Độc lập - Tự do - Hạnh phúc'));
+  assert.ok(xml.includes('Số: 01/HD-KHBD'));
+  assert.ok(xml.includes('HƯỚNG DẪN'));
+  assert.ok(xml.includes('Nơi nhận:'));
+  assert.ok(xml.includes('HIỆU TRƯỞNG'));
+  assert.ok(xml.includes('Trần Công Toàn'));
+  assert.ok(xml.includes('<w:titlePg/>'), 'Page number must be suppressed on page 1');
+
+  // Margins: top/bottom 20mm (1133 twips), left 30mm (1700 twips), right 15mm (850 twips)
+  assert.ok(xml.includes('w:top="1133"'));
+  assert.ok(xml.includes('w:bottom="1133"'));
+  assert.ok(xml.includes('w:left="1700"'));
+  assert.ok(xml.includes('w:right="850"'));
+
+  // 13pt Times New Roman everywhere
+  const sizes = new Set(Array.from(xml.matchAll(/<w:sz w:val="(\d+)"/g)).map((m) => m[1]));
+  assert.deepEqual([...sizes], ['26']);
+  assert.ok(xml.includes('w:ascii="Times New Roman"'));
+
+  // Table cells: 0 indent, 0pt spacing, single line spacing, centered
+  const cells = xml.match(/<w:tc>[\s\S]*?<\/w:tc>/g) ?? [];
+  assert.ok(cells.length >= 6);
+  for (const tc of cells) {
+    assert.ok(tc.includes('<w:vAlign w:val="center"/>'));
+    const cellParas = tc.match(/<w:p>[\s\S]*?<\/w:p>/g) ?? [];
+    for (const p of cellParas) {
+      assert.ok(p.includes('<w:ind w:firstLine="0"/>'));
+      assert.ok(p.includes('<w:jc w:val="center"/>'));
+      assert.ok(p.includes('w:after="0" w:before="0" w:line="240" w:lineRule="auto"'));
+    }
+  }
+
+  // Justified body paragraphs: 1.27cm indent (720 twips), before 6pt (120 twips), single line spacing
+  const xmlWithoutTables = xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, '');
+  const bodyParas = (xmlWithoutTables.match(/<w:p>[\s\S]*?<\/w:p>/g) ?? []).filter((p) =>
+    p.includes('<w:jc w:val="both"/>')
+  );
+  assert.ok(bodyParas.length >= 15);
+  for (const p of bodyParas) {
+    assert.ok(p.includes('<w:ind w:firstLine="720"/>'));
+    assert.ok(p.includes('w:after="0" w:before="120" w:line="240" w:lineRule="auto"'));
+  }
+});
+
+

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FilePlus2,
   FolderKanban,
+  HelpCircle,
   LayoutDashboard,
   LayoutTemplate,
   Settings,
@@ -17,6 +18,7 @@ export type AppRoute =
   | 'editor'
   | 'library'
   | 'templates'
+  | 'guide'
   | 'settings';
 
 interface SidebarProps {
@@ -40,6 +42,7 @@ const NAV_ITEMS: Array<{
   { id: 'editor', label: 'Không gian soạn thảo', icon: BookOpen },
   { id: 'library', label: 'Thư viện kế hoạch', icon: FolderKanban },
   { id: 'templates', label: 'Mẫu kế hoạch', icon: LayoutTemplate },
+  { id: 'guide', label: 'Hướng dẫn sử dụng', icon: HelpCircle },
   { id: 'settings', label: 'Cài đặt', icon: Settings },
 ];
 

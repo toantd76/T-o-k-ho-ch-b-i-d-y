@@ -19,6 +19,7 @@ const ROUTE_TITLES: Record<AppRoute, string> = {
   editor: 'Không gian soạn thảo',
   library: 'Thư viện kế hoạch',
   templates: 'Mẫu kế hoạch',
+  guide: 'Hướng dẫn sử dụng',
   settings: 'Cài đặt hệ thống',
 };
 

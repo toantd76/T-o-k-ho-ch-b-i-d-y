@@ -26,6 +26,7 @@ import { WizardView } from './views/WizardView';
 import { EditorView } from './views/EditorView';
 import { LibraryView } from './views/LibraryView';
 import { TemplatesView } from './views/TemplatesView';
+import { GuideView } from './views/GuideView';
 import { SettingsView } from './views/SettingsView';
 
 interface ToastItem {
@@ -568,6 +569,10 @@ export default function App() {
               onUseTemplate={handleUseTemplate}
               onDeleteCustomTemplate={handleDeleteCustomTemplate}
             />
+          )}
+
+          {activeRoute === 'guide' && (
+            <GuideView profile={profile} settings={settings} onNotify={notify} />
           )}
 
           {activeRoute === 'settings' && (
